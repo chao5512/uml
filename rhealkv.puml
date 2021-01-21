@@ -1,0 +1,108 @@
+@startuml rhealkv
+!includeurl https://raw.githubusercontent.com/xuanye/plantuml-style-c4/master/core.puml
+
+
+interface "RawKVStore" as store {
+    +void get(final byte[] key, final boolean readOnlySafe, final KVStoreClosure closure)
+    +void execute(final NodeExecutor nodeExecutor, final boolean isLeader, final KVStoreClosure closure)
+}
+
+class "RaftRawKVStore" as rkv {
+    -Node          node
+    -RawKVStore    kvStore
+    -Executor      readIndexExecutor
+
+}
+
+abstract class "BaseRawKVStore" as baseKv {
+    +void execute(NodeExecutor nodeExecutor, boolean isLeader, KVStoreClosure closure)
+}
+
+abstract class "BatchRawKVStore" as batchStore
+
+class rocksKv as "RocksRawKVStore" <<(R,#ADD1B2) rocksdb 实现的支持批量的kv store>>{
+    -RocksDB db
+}
+class storeEngine as "StoreEngine" <<一个node节点上有一个>>{
+    -Map<Long, RegionKVService> regionKVServiceTable
+    -Map<Long, RegionEngine>    regionEngineTable
+    -PlacementDriverClient      pdClient
+    -BatchRawKVStore        rawKVStore
+    -RpcServer                  rpcServer
+}
+class regionEngine as "RegionEngine" {
+    Region              region
+    RaftRawKVStore      raftRawKVStore
+    RaftGroupService    raftGroupService
+    Node                node
+    KVStoreStateMachine fsm
+}
+
+interface regionService as "RegionKVService" 
+
+class regionServer as "DefaultRegionKVService" {
+    RegionEngine  regionEngine
+    RawKVStore    rawKVStore
+}
+
+class stateMachine as "KVStoreStateMachine" {
+    BatchRawKVStore<?>  rawKVStore
+    KVStoreSnapshotFile storeSnapshotFile
+    +void onApply(final Iterator it)
+}
+
+
+
+
+
+store <<原始 kv store>>
+rkv <<基于raft复制状态机的RowKVStore>>
+baseKv <<1. 基本的接口转换 2.默认实现 3.增加新方法>>
+batchStore <<默认的批量写实现（遍历），未优化>>
+
+note right of store::get
+readOnlySafe 用来表示是否请求一个一致性读
+end note
+
+note right of store::execute
+一个raft node 的statmachine被apply 后会被触发
+end note
+
+
+note right of baseKv::execute
+默认实现 
+返回apply结果
+end note
+
+note right of rkv::node
+raft node
+用于向raft group提交任务
+end note
+
+note right of rkv::kvStore
+用于短路操作
+在不要求一致性的情况下提升速度
+end note
+
+note right of storeEngine::rpcServer #Khaki
+接收kv请求,通过storeEngine拿到请求对应的regionService
+将请求发给regionSevice
+最好和raft rpcServer分开
+end note
+
+note right of regionServer::rawKVStore #Khaki
+其实是一个RaftRawKVStore
+为了包装成一个MetricsRawKVStore才在这里声明为RawKVStore
+end note
+
+
+rkv -up..|> store
+baseKv -up..|> store
+batchStore -up-|> baseKv
+rocksKv -up-|> batchStore
+storeEngine::rawKVStore --> batchStore
+storeEngine "1" *-- "many" regionEngine
+storeEngine "1" *-- "many" regionService
+regionServer -up..|> regionService
+regionEngine::fsm --> stateMachine
+@enduml

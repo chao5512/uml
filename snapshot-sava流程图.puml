@@ -1,0 +1,59 @@
+@startuml snapshot-sava流程图
+'!includeurl https://raw.githubusercontent.com/xuanye/plantuml-style-c4/master/core.puml
+
+start
+if ("当前region是isMultiGroup") then (true)
+    :lock;
+    :删除旧tmp snapshot;
+    :收集所有列族;
+    :lock;
+    :db.getSnapshot();
+    if ("配置了异步snapshot") then (yes)
+        :发布创建sst文件的任务;
+        :unlock;
+        :return;
+    else
+        :发布创建sst文件的任务;
+    endif
+    :lock;
+    repeat :遍历所有列族;
+        :Iterator 读出每一个kv;
+        :使用SstFileWriter写sst文件;
+        backward:循环;
+    repeat while (还有列族)
+    :closeAndRelease(snapshot);
+    :删除旧snapshot;
+    :移动临时snapshot文件夹到snapshot;
+    :unlock;
+    :将region对象写入元数据;
+else
+    if (是checkpoint方式) then (yes)
+            :lock;
+            :checkpoint到tmp snapshot目录;
+            note right : checkpoint方式足够快，不需要异步
+            :mv 到snapshot目录;
+            :unlock;
+            :写入null到元数据
+            标示是一个整体snapshot;
+        else (no)
+            :backup db 方式;
+            :lock;
+            :使用backupEngine创建一个新的backup;
+            :使用backupEngine获得backup列表;
+            :unlock;
+            :将最新的backupInfo写入元数据;
+            note left 
+            backupInfo{
+                int   backupId;
+                int   numberFiles;
+                long  timestamp;
+                long  size;
+            }
+            end note
+        endif
+endif
+:将snapshot files压缩打包到raft sanpshot目录;
+:将crc写入元数据;
+:将元数据写入raft sanpshot目录;
+stop
+@enduml
