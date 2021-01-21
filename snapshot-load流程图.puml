@@ -1,0 +1,41 @@
+@startuml snapshot-load流程图
+!includeurl https://raw.githubusercontent.com/xuanye/plantuml-style-c4/master/core.puml
+
+start
+:leader 不支持snapshot load操作;
+:先读元数据meta;
+:解压，检查crc;
+if(当前region是isMultiGroup) then (yes)
+    :从meta中反序列化出region;
+    if(和当前region是同一个region) then (yes)
+    :lock;
+    :从snapshot文件获取所有列族的sst;
+    :lock;
+    repeat :遍历列族;
+    :按列族db.ingestExternalFile();
+    backward :循环;
+    repeat while(还有列族)
+    :unlock;
+    endif
+else
+    if(checkpoiont方式) then (yes)
+    :lock;
+    :close 当前db 
+    db = null;
+    :用sanpshot文件替换数据目录;
+    :open db;
+    :unlock;
+    else
+    :从meta中反序列出backupInfo;
+    :lock;
+    :close db
+    db = null;
+    :backupEngine.restoreDbFromBackup;
+    note left :增量备份
+    :openDB;
+    :unlock;
+    endif
+endif
+:删除临时文件;
+stop
+@enduml
